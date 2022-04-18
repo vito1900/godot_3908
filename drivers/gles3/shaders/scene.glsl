@@ -102,8 +102,13 @@ layout(std140) uniform SceneData { // ubo:0
 	highp vec2 shadow_atlas_pixel_size;
 	highp vec2 directional_shadow_pixel_size;
 
+	int paint_ssa_area;
+	int bbaa_paint;
+	int depth_paint;
+
 	highp float time;
 	highp float z_far;
+	highp float z_near;
 	mediump float reflection_multiplier;
 	mediump float subsurface_scatter_width;
 	mediump float ambient_occlusion_affect_light;
@@ -797,8 +802,13 @@ layout(std140) uniform SceneData {
 	highp vec2 shadow_atlas_pixel_size;
 	highp vec2 directional_shadow_pixel_size;
 
+	int paint_ssa_area;
+	int bbaa_paint;
+	int depth_paint;
+
 	highp float time;
 	highp float z_far;
+	highp float z_near;
 	mediump float reflection_multiplier;
 	mediump float subsurface_scatter_width;
 	mediump float ambient_occlusion_affect_light;
@@ -2129,6 +2139,7 @@ FRAGMENT_SHADER_CODE
 #if !defined(SHADOWS_DISABLED)
 
 	float value;
+	int shadow_slice = 0;
 #ifdef LIGHT_USE_PSSM4 //ubershader-runtime
 	value = shadow_split_offsets.w;
 #else //ubershader-runtime
@@ -2150,8 +2161,220 @@ FRAGMENT_SHADER_CODE
 
 #ifdef LIGHT_USE_PSSM4 //ubershader-runtime
 
+		float fovY = 0;
+		float aspect_ratio = 0;
+
+		// near -- far
+		float n = z_near;
+		float split1 = shadow_split_offsets.x;
+		float split2 = shadow_split_offsets.y;
+		float split3 = shadow_split_offsets.z;
+		float split4 = shadow_split_offsets.w;
+
+		// vertex on shadow map
+		highp vec4 tmpSplane1 =  (shadow_matrix1 * vec4(vertex, 1.0));
+		highp vec4 tmpSplane2 =  (shadow_matrix2 * vec4(vertex, 1.0));
+		highp vec4 tmpSplane3 =  (shadow_matrix3 * vec4(vertex, 1.0));
+		vec3 tmpPssm_coord1 = tmpSplane1.xyz / tmpSplane1.w;
+		vec3 tmpPssm_coord2 = tmpSplane2.xyz / tmpSplane2.w;
+		vec3 tmpPssm_coord3 = tmpSplane3.xyz / tmpSplane3.w;
+
+		// camera
+		aspect_ratio = viewport_size.x / viewport_size.y;
+		fovY = 2 * atan(1.0,projection_matrix[1][1]);
+		float y1 = n * tan(fovY / 2.0);
+		float x1 = y1 * aspect_ratio;
+		float y2 = split1 * tan(fovY / 2.0);
+		float x2 = y2 * aspect_ratio;
+		float y3 = split2 * tan(fovY / 2.0);
+		float x3 = y3 * aspect_ratio;
+		float y4 = split3 * tan(fovY / 2.0);
+		float x4 = y4 * aspect_ratio;
+
+		// frustum corners in view space
+		vec3 corner1[8];
+		corner1[0] = vec3(x1, y1, -n);
+		corner1[1] = vec3(x1, -y1, -n);
+		corner1[2] = vec3(-x1, y1, -n);
+		corner1[3] = vec3(-x1, -y1, -n);
+		corner1[4] = vec3(x2, y2, -split1);
+		corner1[5] = vec3(x2, -y2, -split1);
+		corner1[6] = vec3(-x2, y2, -split1);
+		corner1[7] = vec3(-x2, -y2, -split1);
+		vec3 corner2[8];
+		corner2[0] = vec3(x3, y3, -split2);
+		corner2[1] = vec3(x3, -y3, -split2);
+		corner2[2] = vec3(-x3, y3, -split2);
+		corner2[3] = vec3(-x3, -y3, -split2);
+		corner2[4] = vec3(x2, y2, -split1);
+		corner2[5] = vec3(x2, -y2, -split1);
+		corner2[6] = vec3(-x2, y2, -split1);
+		corner2[7] = vec3(-x2, -y2, -split1);
+		vec3 corner3[8];
+		corner3[0] = vec3(x3, y3, -split2);
+		corner3[1] = vec3(x3, -y3, -split2);
+		corner3[2] = vec3(-x3, y3, -split2);
+		corner3[3] = vec3(-x3, -y3, -split2);
+		corner3[4] = vec3(x4, y4, -split3);
+		corner3[5] = vec3(x4, -y4, -split3);
+		corner3[6] = vec3(-x4, y4, -split3);
+		corner3[7] = vec3(-x4, -y4, -split3);
+
+		// frustum corners in shadowmap space
+		vec3 corner_shadow1[8];	// corners on shadowmap
+		vec3 corner_shadow2[8];	
+		vec3 corner_shadow3[8];	
+		for(int index = 0; index < 8; index++) {
+			vec4 view_corner = vec4(corner1[index], 1.0);
+			view_corner = shadow_matrix1 * view_corner;
+			corner_shadow1[index] = view_corner.xyz / view_corner.w;
+
+			view_corner = vec4(corner2[index], 1.0);
+			view_corner = shadow_matrix2 * view_corner;
+			corner_shadow2[index] = view_corner.xyz / view_corner.w;
+
+			view_corner = vec4(corner3[index], 1.0);
+			view_corner = shadow_matrix3 * view_corner;
+			corner_shadow3[index] = view_corner.xyz / view_corner.w;
+		}
+
+		// get min & max of corner_shadow
+		float xmin1 = corner_shadow1[0].x;
+		float ymin1 = corner_shadow1[0].y;
+		float zmin1 = corner_shadow1[0].z;
+		float xmax1 = corner_shadow1[0].x;
+		float ymax1 = corner_shadow1[0].y;
+		float zmax1 = corner_shadow1[0].z;
+		for(int index = 0; index < 8; index++) {
+			xmin1 = min(xmin1, corner_shadow1[index].x);
+			ymin1 = min(ymin1, corner_shadow1[index].y);
+			zmin1 = min(zmin1, corner_shadow1[index].z);
+			xmax1 = max(xmax1, corner_shadow1[index].x);
+			ymax1 = max(ymax1, corner_shadow1[index].y);
+			zmax1 = max(zmax1, corner_shadow1[index].z);
+		}
+		float xmin2 = corner_shadow2[0].x;
+		float ymin2 = corner_shadow2[0].y;
+		float zmin2 = corner_shadow2[0].z;
+		float xmax2 = corner_shadow2[0].x;
+		float ymax2 = corner_shadow2[0].y;
+		float zmax2 = corner_shadow2[0].z;
+		for(int index = 0; index < 8; index++) {
+			xmin2 = min(xmin2, corner_shadow2[index].x);
+			ymin2 = min(ymin2, corner_shadow2[index].y);
+			zmin2 = min(zmin2, corner_shadow2[index].z);
+			xmax2 = max(xmax2, corner_shadow2[index].x);
+			ymax2 = max(ymax2, corner_shadow2[index].y);
+			zmax2 = max(zmax2, corner_shadow2[index].z);
+		}
+		float xmin3 = corner_shadow3[0].x;
+		float ymin3 = corner_shadow3[0].y;
+		float zmin3 = corner_shadow3[0].z;
+		float xmax3 = corner_shadow3[0].x;
+		float ymax3 = corner_shadow3[0].y;
+		float zmax3 = corner_shadow3[0].z;
+		for(int index = 0; index < 8; index++) {
+			xmin3 = min(xmin3, corner_shadow3[index].x);
+			ymin3 = min(ymin3, corner_shadow3[index].y);
+			zmin3 = min(zmin3, corner_shadow3[index].z);
+			xmax3 = max(xmax3, corner_shadow3[index].x);
+			ymax3 = max(ymax3, corner_shadow3[index].y);
+			zmax3 = max(zmax3, corner_shadow3[index].z);
+		}
+
+		if(bbaa_paint == 1) {
+
+			// case 1
+			if(	
+				(tmpPssm_coord1.x > xmin1) && (tmpPssm_coord1.x < xmax1) 
+				&& 
+				(tmpPssm_coord1.y > ymin1) && (tmpPssm_coord1.y < ymax1) 
+				&& 
+				(tmpPssm_coord1.z > zmin1) && (tmpPssm_coord1.z < zmax1) 
+			) {
+					if(paint_ssa_area == 1) {
+						shadow_slice = 1;
+					}
+					highp vec4 splane = (shadow_matrix1 * vec4(vertex, 1.0));
+					pssm_coord = splane.xyz / splane.w;
+
+#ifdef LIGHT_USE_PSSM_BLEND //ubershader-runtime
+					splane = (shadow_matrix2 * vec4(vertex, 1.0));
+					pssm_coord2 = splane.xyz / splane.w;
+					pssm_blend = smoothstep(0.0, shadow_split_offsets.x, depth_z);
+#endif //ubershader-runtime
+			}
+
+			// case 2
+			else if (
+				(tmpPssm_coord2.x > xmin2) && (tmpPssm_coord2.x < xmax2) 
+				&& 
+				(tmpPssm_coord2.y > ymin2) && (tmpPssm_coord2.y < ymax2) 
+				&& 
+				(tmpPssm_coord2.z > zmin2) && (tmpPssm_coord2.z < zmax2) 
+			) {
+					if(paint_ssa_area == 1) {
+						shadow_slice = 2;
+					}
+
+					highp vec4 splane = (shadow_matrix2 * vec4(vertex, 1.0));
+					pssm_coord = splane.xyz / splane.w;
+
+#ifdef LIGHT_USE_PSSM_BLEND //ubershader-runtime
+					splane = (shadow_matrix3 * vec4(vertex, 1.0));
+					pssm_coord2 = splane.xyz / splane.w;
+					pssm_blend = smoothstep(shadow_split_offsets.x, shadow_split_offsets.y, depth_z);
+#endif //ubershader-runtime
+
+			}
+
+			// case 3
+			else if (
+				(tmpPssm_coord3.x > xmin3) && (tmpPssm_coord3.x < xmax3) 
+				&& 
+				(tmpPssm_coord3.y > ymin3) && (tmpPssm_coord3.y < ymax3) 
+				&& 
+				(tmpPssm_coord3.z > zmin3) && (tmpPssm_coord3.z < zmax3) 
+			) {
+					if(paint_ssa_area == 1) {
+						shadow_slice = 3;
+					}
+
+					highp vec4 splane = (shadow_matrix3 * vec4(vertex, 1.0));
+					pssm_coord = splane.xyz / splane.w;
+
+#ifdef LIGHT_USE_PSSM_BLEND //ubershader-runtime
+					splane = (shadow_matrix4 * vec4(vertex, 1.0));
+					pssm_coord2 = splane.xyz / splane.w;
+					pssm_blend = smoothstep(shadow_split_offsets.x, shadow_split_offsets.y, depth_z);
+#endif //ubershader-runtime
+
+			}
+			
+			// case rest
+			else {
+					if(paint_ssa_area == 1) {
+						shadow_slice = 4;
+					}
+
+					highp vec4 splane = (shadow_matrix4 * vec4(vertex, 1.0));
+					pssm_coord = splane.xyz / splane.w;
+
+#ifdef LIGHT_USE_PSSM_BLEND //ubershader-runtime
+					use_blend = false;
+#endif //ubershader-runtime
+
+			}
+		}
+
+
+		else {
+
 		if (depth_z < shadow_split_offsets.y) {
 			if (depth_z < shadow_split_offsets.x) {
+				if(paint_ssa_area == 1) {
+					shadow_slice = 1;
+				}
 				highp vec4 splane = (shadow_matrix1 * vec4(vertex, 1.0));
 				pssm_coord = splane.xyz / splane.w;
 
@@ -2163,6 +2386,9 @@ FRAGMENT_SHADER_CODE
 #endif //ubershader-runtime
 
 			} else {
+				if(paint_ssa_area == 1) {
+					shadow_slice = 2;
+				}
 				highp vec4 splane = (shadow_matrix2 * vec4(vertex, 1.0));
 				pssm_coord = splane.xyz / splane.w;
 
@@ -2174,6 +2400,9 @@ FRAGMENT_SHADER_CODE
 			}
 		} else {
 			if (depth_z < shadow_split_offsets.z) {
+				if(paint_ssa_area == 1) {
+					shadow_slice = 3;
+				}
 				highp vec4 splane = (shadow_matrix3 * vec4(vertex, 1.0));
 				pssm_coord = splane.xyz / splane.w;
 
@@ -2184,6 +2413,9 @@ FRAGMENT_SHADER_CODE
 #endif //ubershader-runtime
 
 			} else {
+				if(paint_ssa_area == 1) {
+					shadow_slice = 4;
+				}
 				highp vec4 splane = (shadow_matrix4 * vec4(vertex, 1.0));
 				pssm_coord = splane.xyz / splane.w;
 				pssm_fade = smoothstep(shadow_split_offsets.z, shadow_split_offsets.w, depth_z);
@@ -2193,6 +2425,8 @@ FRAGMENT_SHADER_CODE
 
 #endif //ubershader-runtime
 			}
+		}
+
 		}
 
 #endif //LIGHT_USE_PSSM4 //ubershader-runtime
@@ -2412,4 +2646,27 @@ FRAGMENT_SHADER_CODE
 #endif //USE_MULTIPLE_RENDER_TARGETS //ubershader-runtime
 
 #endif //RENDER_DEPTH //ubershader-runtime
+
+#ifdef LIGHT_USE_PSSM4 
+	if (shadow_slice == 1) {
+		frag_color.r *= 1.5;
+		frag_color.g *= 0.2;
+		frag_color.b *= 1.5;
+	}
+	else if (shadow_slice == 2) {
+		frag_color.r *= 0.2;
+		frag_color.g *= 1.5;
+		frag_color.b *= 0.2;
+	}
+	else if (shadow_slice == 3) {
+		frag_color.r *= 1.5;
+		frag_color.g *= 0.2;
+		frag_color.b *= 0.2;
+	}
+	else if (shadow_slice == 4) {
+		frag_color.r *= 0.2;
+		frag_color.g *= 0.2;
+		frag_color.b *= 1.5;
+	}
+#endif
 }

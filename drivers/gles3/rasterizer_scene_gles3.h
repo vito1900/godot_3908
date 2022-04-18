@@ -134,8 +134,13 @@ public:
 			float shadow_atlas_pixel_size[2];
 			float shadow_directional_pixel_size[2];
 
+			int paint_ssa_area;
+			int bbaa_paint;
+			int depth_paint;
+
 			float time;
 			float z_far;
+			float z_near;
 			float reflection_multiplier;
 			float subsurface_scatter_width;
 			float ambient_occlusion_affect_light;
