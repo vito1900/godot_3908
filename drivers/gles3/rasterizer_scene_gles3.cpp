@@ -2560,6 +2560,12 @@ void RasterizerSceneGLES3::_setup_environment(Environment *env, const CameraMatr
 	state.ubo_data.view_index = p_eye == 2 ? 1 : 0;
 
 	state.ubo_data.z_far = p_cam_projection.get_z_far();
+	state.ubo_data.z_near = p_cam_projection.get_z_near();
+
+	state.ubo_data.paint_ssa_area = GLOBAL_GET("display/paint_area");
+	state.ubo_data.bbaa_paint = GLOBAL_GET("display/bbaa_paint");
+	state.ubo_data.depth_paint = GLOBAL_GET("display/depth_paint");
+
 	//bg and ambient
 	if (env) {
 		state.ubo_data.bg_energy = env->bg_energy;
