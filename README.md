@@ -1,4 +1,4 @@
-# Shadows using view depth (first) and bounding box (second)
+# Shadows rendered using view depth (first) and bounding box (second)
 
 <p float="left">
 	<img src="/img/normal_depth.jpg" width="1000" />
